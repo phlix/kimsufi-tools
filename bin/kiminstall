@@ -107,10 +107,8 @@ install(){
         fail "Aborted by user."
     fi
 
-    # TODO: Use a configuration file instead of options or prompting.
-
     if test "x$encryptionkey" = "xnone"; then
-        input "Enter the encryption key:"
+        input "Enter the encryption key (will not echo):"
         read -s encryptionkey
     fi
 
@@ -130,7 +128,7 @@ install(){
     fi
 
     if test "x$rootpassword" = "xnone"; then
-        input "Enter the root password:"
+        input "Enter the root password (will not echo!):"
         read -s rootpassword
     fi
 
@@ -140,54 +138,96 @@ install(){
     fi
 
     if test "x$userpassword" = "xnone"; then
-        input "Enter the user password:"
+        input "Enter the user password (will not echo!):"
         read -s userpassword
+    fi
+
+    if test "x$swapsize" = "xnone"; then
+        input "Enter the size of swap partiton, e.g. 4.0g:"
+        read swapsize
     fi
 
     if test "x$address4" = "xnone"; then
         input "Enter the IP v4 address, e.g. 1.2.3.4:"
-        read -s address4
+        read address4
     fi
 
     if test "x$slash_netmask4" = "xnone"; then
         input "Enter the IP v4 slashed netmask, e.g. /24:"
-        read -s slash_netmask4
+        read slash_netmask4
     fi
 
     if test "x$full_netmask4" = "xnone"; then
         input "Enter the IP v4 full netmask, e.g. 255.255.255.0:"
-        read -s full_netmask4
+        read full_netmask4
     fi
 
     if test "x$gateway4" = "xnone"; then
         input "Enter the IP v4 gateway, e.g. 1.2.3.254:"
-        read -s gateway4
+        read gateway4
     fi
 
     if test "x$address6" = "xnone"; then
         input "Enter the IP v6 address, e.g. 1:2:3:4444::1/128:"
-        read -s address6
+        read address6
     fi
 
     if test "x$gateway6" = "xnone"; then
         input "Enter the IP v6 gateway, e.g. 1:2:3:44ff::1:"
-        read -s gateway6
+        read gateway6
+    fi
+
+    if test "x$resolverip1" = "xnone"; then
+        input "Enter the IP v4 address for 1st DNS resolver, e.g. 8.8.8.8"
+        read resolverip1
+    fi
+
+    if test "x$resolverip2" = "xnone"; then
+        input "Enter the IP v4 address for 2nd DNS resolver, e.g. 8.8.4.4"
+        read resolverip2
+    fi
+
+    if test "x$timezone" = "xnone"; then
+        input "Enter the timezone, e.g. Europe/Vienna"
+        read timezone
+    fi
+
+    if test "x$locale" = "xnone"; then
+        input "Enter the locale, e.g. de_AT.UTF-8"
+        read locale
+    fi
+
+    if test "x$disablerecommendedandsuggested" = "xnone"; then
+        input "Disable installation of recommended and suggested packages? (yes/no):"
+        read disablerecommendedandsuggested
     fi
 
     info "Your Configuration:\n"
-    echo "$encryptionkey"
-    echo "$hostname"
-    echo "$domainname"
-    echo "$sshpubkey"
-    echo "$rootpassword"
-    echo "$username"
-    echo "$userpassword"
-    echo "$address4"
-    echo "$gateway4"
-    echo "$slash_netmask4"
-    echo "$full_netmask4"
-    echo "$address6"
-    echo "$gateway6"
+    echo "encryptionkey = $encryptionkey"
+    echo "     hostname = $hostname"
+    echo "   domainname = $domainname"
+    echo "    sshpubkey = $sshpubkey"
+    echo " rootpassword = $rootpassword"
+    echo "     username = $username"
+    echo " userpassword = $userpassword"
+    echo "     swapsize = $swapsize"
+    echo "     address4 = $address4"
+    echo "     gateway4 = $gateway4"
+    echo "slash_netmask = $slash_netmask4"
+    echo "full_netmask4 = $full_netmask4"
+    echo "     address6 = $address6"
+    echo "     gateway6 = $gateway6"
+    echo "  resolverip1 = $resolverip1"
+    echo "  resolverip2 = $resolverip2"
+    echo "     timezone = $timezone"
+    echo "       locale = $locale"
+    echo "disablerecommendedandsuggested = $disablerecommendedandsuggested"
+
+    input "Please check your configuration and type \"yes\" to continue:"
+    read answer
+    if ! test "x${answer}" = "xyes"; then
+        fail "Aborted by user."
+    fi
 
     info "Installing dependencies"
     apt update
@@ -195,6 +235,7 @@ install(){
     success "Installed dependencies"
 
     info "Creating the partition table"
+    wipefs -a /dev/sda
     parted --script --align optimal /dev/sda mklabel msdos
     parted /dev/sda --align optimal mkpart primary 0% 512MiB
     parted /dev/sda --align optimal mkpart primary 512MiB 100%
@@ -208,15 +249,15 @@ install(){
     success "Created the boot partition"
 
     info "Creating the encrypted partition"
-    printf "$encryptionkey" | cryptsetup -q -s 512 -c aes-xts-plain64 luksFormat /dev/sda2 -
-    printf "$encryptionkey" | cryptsetup luksOpen /dev/sda2 sda2_crypt --key-file -
+    printf '%s' "$encryptionkey" | cryptsetup -q -s 512 -c aes-xts-plain64 luksFormat /dev/sda2 -
+    printf '%s' "$encryptionkey" | cryptsetup luksOpen /dev/sda2 sda2_crypt --key-file -
     success "Created encrypted partition /dev/sda2"
 
     info "Creating lvm partitions"
     pvcreate /dev/mapper/sda2_crypt
     vgcreate vg0 /dev/mapper/sda2_crypt
     lvcreate -L 500m -n root vg0
-    lvcreate -L 500m -n swap vg0
+    lvcreate -L $swapsize -n swap vg0
     lvresize -l 100%FREE -n vg0/root
     lvdisplay
 
@@ -237,9 +278,14 @@ install(){
     swapon -v /dev/mapper/vg0-swap
     success "Volumes mounted"
 
+    info "Applying Debian bullseye hack"
+    wget http://ftp.debian.org/debian/pool/main/d/debootstrap/debootstrap_1.0.123+deb11u1_all.deb && dpkg -i debootstrap*.deb && rm -f debootstrap*.deb
+    wget https://ftp-master.debian.org/keys/release-11.asc -qO- | gpg --import --no-default-keyring --keyring ./debian-release-11.gpg
+    mv debian-release-11.gpg /usr/share/keyrings/debian-archive-keyring.gpg
+    success "Hack applied"
+
     info "Installing"
-    gpg /usr/share/keyrings/debian-archive-keyring.gpg
-    debootstrap --arch amd64 buster /target http://debian.mirrors.ovh.net/debian
+    debootstrap --arch amd64 bullseye /target http://debian.mirrors.ovh.net/debian
     success "Installed"
 
     info "Mounting runtime"
@@ -284,8 +330,6 @@ iface eth0 inet6 static
     address $address6
     post-up /sbin/ip -6 route add $gateway6 dev eth0
     post-up /sbin/ip -6 route add default via $gateway6 dev eth0
-    pre-down /sbin/ip -6 route del default via $gateway6 dev eth0
-    pre-down /sbin/ip -6 route del $gateway6 dev eth0
 HERE
 
     info "Creating /etc/sysctl.d/local.conf"
@@ -300,14 +344,12 @@ HERE
 
     info "Creating /etc/resolv.conf"
     cat << HERE | tee /target/etc/resolv.conf
-search $domainname
-nameserver 213.186.33.99
-nameserver 1.1.1.1
-nameserver 1.0.0.1
+nameserver $resolverip1
+nameserver $resolverip2
 HERE
 
     info "Creating /etc/hostname"
-    printf "$hostname\n" | tee /target/etc/hostname
+    printf '%s\n' "$hostname" | tee /target/etc/hostname
 
     info "Creating /etc/hosts"
     cat << HERE | tee /target/etc/hosts
@@ -320,41 +362,28 @@ HERE
     success "Created the network configuration"
 
     info "Configuring timezone"
-    # XXX: use a configuration value
-    # XXX: using timedatectl is untested
-    chroot /target timedatectl set-timezone Europe/Berlin
-    # printf "Europe/Berlin\n" | tee /target/etc/timezone
-    # chroot /target dpkg-reconfigure -f noninteractive tzdata
-
+    # Tell BIOS clock to use UTC
+    echo -e '0.0 0 0.0\n0\nUTC' > /target/etc/adjtime
+    chroot /target ln -sf /usr/share/zoneinfo/$timezone /etc/localtime
     success "Configured time"
 
     info "Updating and installing dependencies"
     cat << HERE | tee /target/etc/apt/sources.list
-deb     http://debian.mirrors.ovh.net/debian            buster              main non-free contrib
-deb-src http://debian.mirrors.ovh.net/debian            buster              main non-free contrib
-deb     http://debian.mirrors.ovh.net/debian            buster-updates      main non-free contrib
-deb-src http://debian.mirrors.ovh.net/debian            buster-updates      main non-free contrib
-deb     http://debian.mirrors.ovh.net/debian            buster-backports    main non-free contrib
-deb-src http://debian.mirrors.ovh.net/debian            buster-backports    main non-free contrib
-deb     http://debian.mirrors.ovh.net/debian-security   buster/updates      main non-free contrib
-deb-src http://debian.mirrors.ovh.net/debian-security   buster/updates      main non-free contrib
+deb     http://debian.mirrors.ovh.net/debian            bullseye            main contrib non-free
+deb     http://debian.mirrors.ovh.net/debian-security   bullseye-security   main contrib non-free
+deb     http://debian.mirrors.ovh.net/debian            bullseye-updates    main contrib non-free
 HERE
 
-    cat << HERE | tee /target/etc/apt/apt.conf.d/02aptsettings
+    if test "x$disablerecommendedandsuggested" = "xyes"; then
+        cat << HERE | tee /target/etc/apt/apt.conf.d/02aptsettings
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 HERE
+    fi
 
     chroot /target apt update
     DEBIAN_FRONTEND=noninteractive chroot /target \
         apt -y \
-        -o Dpkg::Options::="--force-confdef" \
-        -o Dpkg::Options::="--force-confold" \
-        full-upgrade
-    DEBIAN_FRONTEND=noninteractive chroot /target \
-        apt -y \
-        -o Dpkg::Options::="--force-confdef" \
-        -o Dpkg::Options::="--force-confold" \
         install \
         busybox \
         console-setup \
@@ -368,31 +397,22 @@ HERE
         locales \
         lvm2 \
         makedev \
+        ntp \
         ssh \
-        initscripts \
-        vim \
-        less \
-        ntpdate \
         sudo \
-        ca-certificates \
-        zsh \
-        tree \
-        docker.io \
-        docker-compose \
-        git \
-        rsync
+        vim
 
     info "User configuration"
     info "Adding user $username"
     chroot /target adduser --disabled-password --gecos "" "$username"
-    chroot /target adduser "$username" sudo
-    chroot /target adduser "$username" adm
+    chroot /target usermod -a -G sudo,adm $username
     info "Setting passwords for root and $username"
-    printf "root:$rootpassword\n" | chroot /target chpasswd
-    printf "$username:$userpassword\n" | chroot /target chpasswd
+
+    printf 'root:%s\n' "$rootpassword" | chroot /target chpasswd
+    printf '%s:%s\n' "$username" "$userpassword" | chroot /target chpasswd
     success "User configured"
 
-    chroot /target locale-gen en_US.UTF-8
+    chroot /target locale-gen $locale
     chroot /target dpkg-reconfigure -f noninteractive locales
     success "Updated and installed dependencies"
 
@@ -401,14 +421,16 @@ HERE
     chmod 700 /target/root/.ssh
     mkdir -p "/target/home/$username/.ssh"
     chmod 700 "/target/home/$username/.ssh"
-    chown -R $username:$username "/target/home/$username/.ssh"
-    printf "$sshpubkey\n" > /target/root/.ssh/authorized_keys
-    printf "$sshpubkey\n" > "/target/home/$username/.ssh/authorized_keys"
-    printf "$sshpubkey\n" > /target/etc/dropbear-initramfs/authorized_keys
+    chroot /target chown -R $username:$username "/home/$username/.ssh"
+    printf '%s\n' "$sshpubkey" > /target/root/.ssh/authorized_keys
+    printf '%s\n' "$sshpubkey" > "/target/home/$username/.ssh/authorized_keys"
+    printf '%s\n' "$sshpubkey" > /target/etc/dropbear-initramfs/authorized_keys
+    sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin no/g' /target/etc/ssh/sshd_config
+    sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/g' /target/etc/ssh/sshd_config
     sed -i "s/^GRUB_CMDLINE_LINUX=\".*\"/GRUB_CMDLINE_LINUX=\"net.ifnames=0\ biosdevname=0\ ip=$address4::$gateway4:$full_netmask4::eth0:none\"/g" /target/etc/default/grub
-    sed -i 's/^#GRUB_TERMINAL=console$/GRUB_TERMINAL=console/' /target/etc/default/grub
-    sed -i 's/^#FSCKFIX=no$/FSCKFIX=yes/' /target/etc/default/rcS
-    sed -i 's/^#Storage=auto$/Storage=persistent/' /target/etc/systemd/journald.conf
+    sed -i 's/^#GRUB_TERMINAL=console$/GRUB_TERMINAL=console/g' /target/etc/default/grub
+    echo 'FSCKFIX=yes' >> /target/etc/default/rcS
+    sed -i 's/^#Storage=auto$/Storage=persistent/g' /target/etc/systemd/journald.conf
     chroot /target grub-install /dev/sda
     chroot /target update-grub
     chroot /target update-initramfs -u
