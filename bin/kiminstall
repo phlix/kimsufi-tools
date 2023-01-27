@@ -142,9 +142,45 @@ install(){
         read -s userpassword
     fi
 
+    if test "x$pvname" = "xnone"; then
+        input "Enter the name of luks device & physical volume (lvm), e.g. sda2_crypt:"
+        read pvname
+    fi
+
+    if test "x$vgname" = "xnone"; then
+        input "Enter the name of volume group (lvm), e.g. vg0:"
+        read vgname
+    fi
+
+
+    if test "x$rootsize" = "xnone"; then
+        input "Enter the size of root partiton, e.g. 1.0g:"
+        read rootsize
+    fi
+
+    if test "x$usrsize" = "xnone"; then
+        input "Enter the size of usr partiton, e.g. 15g:"
+        read usrsize
+    fi
+
+    if test "x$varsize" = "xnone"; then
+        input "Enter the size of var partiton, e.g. 20g:"
+        read varsize
+    fi
+
+    if test "x$srvsize" = "xnone"; then
+        input "Enter the size of srv partiton (will also include /home), e.g. 1000g:"
+        read srvsize
+    fi
+
     if test "x$swapsize" = "xnone"; then
-        input "Enter the size of swap partiton, e.g. 4.0g:"
+        input "Enter the size of swap partiton, e.g. 4.1g:"
         read swapsize
+    fi
+
+    if test "x$tmpsize" = "xnone"; then
+        input "Enter the size of tmp partiton, e.g. 10g:"
+        read tmpsize
     fi
 
     if test "x$address4" = "xnone"; then
@@ -203,24 +239,29 @@ install(){
     fi
 
     info "Your Configuration:\n"
-    echo "encryptionkey = $encryptionkey"
-    echo "     hostname = $hostname"
-    echo "   domainname = $domainname"
-    echo "    sshpubkey = $sshpubkey"
-    echo " rootpassword = $rootpassword"
-    echo "     username = $username"
-    echo " userpassword = $userpassword"
-    echo "     swapsize = $swapsize"
-    echo "     address4 = $address4"
-    echo "     gateway4 = $gateway4"
-    echo "slash_netmask = $slash_netmask4"
-    echo "full_netmask4 = $full_netmask4"
-    echo "     address6 = $address6"
-    echo "     gateway6 = $gateway6"
-    echo "  resolverip1 = $resolverip1"
-    echo "  resolverip2 = $resolverip2"
-    echo "     timezone = $timezone"
-    echo "       locale = $locale"
+    echo " encryptionkey = $encryptionkey"
+    echo "      hostname = $hostname"
+    echo "    domainname = $domainname"
+    echo "     sshpubkey = $sshpubkey"
+    echo "  rootpassword = $rootpassword"
+    echo "      username = $username"
+    echo "  userpassword = $userpassword"
+    echo "      rootsize = $rootsize"
+    echo "       usrsize = $usrsize"
+    echo "       varsize = $varsize"
+    echo "       srvsize = $srvsize"
+    echo "      swapsize = $swapsize"
+    echo "       tmpsize = $tmpsize"
+    echo "      address4 = $address4"
+    echo "      gateway4 = $gateway4"
+    echo "slash_netmask4 = $slash_netmask4"
+    echo " full_netmask4 = $full_netmask4"
+    echo "      address6 = $address6"
+    echo "      gateway6 = $gateway6"
+    echo "   resolverip1 = $resolverip1"
+    echo "   resolverip2 = $resolverip2"
+    echo "      timezone = $timezone"
+    echo "        locale = $locale"
     echo "disablerecommendedandsuggested = $disablerecommendedandsuggested"
 
     input "Please check your configuration and type \"yes\" to continue:"
@@ -250,32 +291,50 @@ install(){
 
     info "Creating the encrypted partition"
     printf '%s' "$encryptionkey" | cryptsetup -q -s 512 -c aes-xts-plain64 luksFormat /dev/sda2 -
-    printf '%s' "$encryptionkey" | cryptsetup luksOpen /dev/sda2 sda2_crypt --key-file -
+    printf '%s' "$encryptionkey" | cryptsetup luksOpen /dev/sda2 $pvname --key-file -
     success "Created encrypted partition /dev/sda2"
 
     info "Creating lvm partitions"
-    pvcreate /dev/mapper/sda2_crypt
-    vgcreate vg0 /dev/mapper/sda2_crypt
-    lvcreate -L 500m -n root vg0
-    lvcreate -L $swapsize -n swap vg0
-    lvresize -l 100%FREE -n vg0/root
+    pvcreate /dev/mapper/$pvname
+    vgcreate $vgname /dev/mapper/$pvname
+    lvcreate -L $rootsize -n root $vgname
+    lvcreate -L $usrsize -n usr $vgname
+    lvcreate -L $varsize -n var $vgname
+    lvcreate -L $srvsize -n srv $vgname
+    lvcreate -L $swapsize -n swap $vgname
+    lvcreate -L $tmpsize -n tmp $vgname
     lvdisplay
 
     # actually not necessary to activate again
     vgchange -aay
-    mkfs.ext4 -L root /dev/mapper/vg0-root
-    mkswap -L swap /dev/mapper/vg0-swap
+    mkfs.ext4 -L root /dev/mapper/$vgname-root
+    mkfs.ext4 -L usr /dev/mapper/$vgname-usr
+    mkfs.ext4 -L var /dev/mapper/$vgname-var
+    mkfs.ext4 -L srv /dev/mapper/$vgname-srv
+    mkswap -L swap /dev/mapper/$vgname-swap
+    mkfs.ext4 -L tmp /dev/mapper/$vgname-tmp
     parted /dev/sda print
-    parted /dev/mapper/vg0-root print
-    parted /dev/mapper/vg0-swap print
-    success "Created the lvm volumes /dev/mapper/root and /dev/mapper/swap"
+    parted /dev/mapper/$vgname-root print
+    parted /dev/mapper/$vgname-usr print
+    parted /dev/mapper/$vgname-var print
+    parted /dev/mapper/$vgname-srv print
+    parted /dev/mapper/$vgname-swap print
+    parted /dev/mapper/$vgname-tmp print
+    success "Created the lvm volumes"
 
     info "Mounting the volumes"
-    mkdir -p /target
-    mount -v /dev/mapper/vg0-root /target
-    mkdir -p /target/boot
-    mount -v /dev/sda1 /target/boot
-    swapon -v /dev/mapper/vg0-swap
+    mkdir -p /mnt
+    mount -v /dev/mapper/$vgname-root /mnt
+    mkdir -p /mnt/{boot,home,srv,tmp,usr,var}
+    mount -v /dev/sda1 /mnt/boot
+    mount -v /dev/mapper/$vgname-usr /mnt/usr
+    mount -v /dev/mapper/$vgname-var /mnt/var
+    mount -v /dev/mapper/$vgname-srv /mnt/srv
+    mkdir /mnt/srv/home
+    mount -o bind /mnt/srv/home /mnt/home
+    mount -v /dev/mapper/$vgname-tmp /mnt/tmp
+    chmod 1777 /mnt/tmp
+    swapon -v /dev/mapper/$vgname-swap
     success "Volumes mounted"
 
     info "Applying Debian bullseye hack"
@@ -285,38 +344,44 @@ install(){
     success "Hack applied"
 
     info "Installing"
-    debootstrap --arch amd64 bullseye /target http://debian.mirrors.ovh.net/debian
+    debootstrap --arch amd64 bullseye /mnt http://debian.mirrors.ovh.net/debian
     success "Installed"
 
     info "Mounting runtime"
     # necessary for chroot
-    mount -v --bind /dev /target/dev
-    mount -v --bind /run /target/run
-    mount -v -t proc proc /target/proc
-    mount -v -t sysfs sys /target/sys
+    mount -v --bind /dev /mnt/dev
+    mount -v --bind /dev/pts /mnt/dev/pts
+    mount -v --bind /run /mnt/run
+    mount -v -t proc proc /mnt/proc
+    mount -v -t sysfs sys /mnt/sys
     success "Runtime mounted"
 
     info "Creating fstab and crypttab"
     uuid="$(cryptsetup luksDump /dev/sda2 | grep UUID | awk '{print $2}')"
     info "Creating /etc/crypttab"
-    cat << HERE | tee /target/etc/crypttab
-sda2_crypt UUID=$uuid none luks
+    cat << HERE | tee /mnt/etc/crypttab
+$pvname UUID=$uuid none luks
 HERE
 
     info "Creating /etc/fstab"
-    cat << HERE | tee /target/etc/fstab
-# file system           mount point type    options                     dump    pass
-/dev/sda1               /boot       ext4    rw,nosuid,nodev,relatime    0       2
-/dev/mapper/vg0-root    /           ext4    errors=remount-ro,relatime  0       1
-/dev/mapper/vg0-swap    none        swap    sw                          0       0
+    cat << HERE | tee /mnt/etc/fstab
+# file system   mount point type    options             dump    pass
+LABEL=root      /           ext4    errors=remount-ro   0       1
+LABEL=tmp       /tmp        ext4    rw,nosuid,nodev     0       2
+LABEL=var       /var        ext4    rw                  0       2
+LABEL=usr       /usr        ext4    rw,nodev            0       2
+LABEL=srv       /srv        ext4    rw,nosuid,nodev     0       2
+/srv/home       /home       auto    bind                0       0
+LABEL=boot      /boot       ext4    rw,nosuid,nodev     0       2
+LABEL=swap      none        swap    sw                  0       0
 HERE
 
-    chroot /target ln -vsf /proc/mounts /etc/mtab
+    chroot /mnt ln -vsf /proc/mounts /etc/mtab
     success "Created fstab and crypttab"
 
     info "Creating the network configuration"
     info "Creating /etc/network/interfaces"
-    cat << HERE | tee /target/etc/network/interfaces
+    cat << HERE | tee /mnt/etc/network/interfaces
 auto lo
 iface lo inet loopback
 
@@ -333,7 +398,7 @@ iface eth0 inet6 static
 HERE
 
     info "Creating /etc/sysctl.d/local.conf"
-    cat << HERE | tee /target/etc/sysctl.d/local.conf
+    cat << HERE | tee /mnt/etc/sysctl.d/local.conf
 net.ipv6.conf.all.autoconf = 0
 net.ipv6.conf.default.autoconf = 0
 net.ipv6.conf.eth0.autoconf = 0
@@ -343,16 +408,16 @@ net.ipv6.conf.eth0.accept_ra = 0
 HERE
 
     info "Creating /etc/resolv.conf"
-    cat << HERE | tee /target/etc/resolv.conf
+    cat << HERE | tee /mnt/etc/resolv.conf
 nameserver $resolverip1
 nameserver $resolverip2
 HERE
 
     info "Creating /etc/hostname"
-    printf '%s\n' "$hostname" | tee /target/etc/hostname
+    printf '%s\n' "$hostname" | tee /mnt/etc/hostname
 
     info "Creating /etc/hosts"
-    cat << HERE | tee /target/etc/hosts
+    cat << HERE | tee /mnt/etc/hosts
 127.0.0.1       localhost
 ::1             localhost ip6-localhost ip6-loopback
 ff02::1         ip6-allnodes
@@ -363,26 +428,26 @@ HERE
 
     info "Configuring timezone"
     # Tell BIOS clock to use UTC
-    echo -e '0.0 0 0.0\n0\nUTC' > /target/etc/adjtime
-    chroot /target ln -sf /usr/share/zoneinfo/$timezone /etc/localtime
+    echo -e '0.0 0 0.0\n0\nUTC' > /mnt/etc/adjtime
+    chroot /mnt ln -sf /usr/share/zoneinfo/$timezone /etc/localtime
     success "Configured time"
 
     info "Updating and installing dependencies"
-    cat << HERE | tee /target/etc/apt/sources.list
+    cat << HERE | tee /mnt/etc/apt/sources.list
 deb     http://debian.mirrors.ovh.net/debian            bullseye            main contrib non-free
 deb     http://debian.mirrors.ovh.net/debian-security   bullseye-security   main contrib non-free
 deb     http://debian.mirrors.ovh.net/debian            bullseye-updates    main contrib non-free
 HERE
 
     if test "x$disablerecommendedandsuggested" = "xyes"; then
-        cat << HERE | tee /target/etc/apt/apt.conf.d/02aptsettings
+        cat << HERE | tee /mnt/etc/apt/apt.conf.d/02aptsettings
 APT::Install-Recommends "0";
 APT::Install-Suggests "0";
 HERE
     fi
 
-    chroot /target apt update
-    DEBIAN_FRONTEND=noninteractive chroot /target \
+    chroot /mnt apt update
+    DEBIAN_FRONTEND=noninteractive chroot /mnt \
         apt -y \
         install \
         busybox \
@@ -402,38 +467,48 @@ HERE
         sudo \
         vim
 
-    info "User configuration"
-    info "Adding user $username"
-    chroot /target adduser --disabled-password --gecos "" "$username"
-    chroot /target usermod -a -G sudo,adm $username
-    info "Setting passwords for root and $username"
-
-    printf 'root:%s\n' "$rootpassword" | chroot /target chpasswd
-    printf '%s:%s\n' "$username" "$userpassword" | chroot /target chpasswd
-    success "User configured"
-
-    chroot /target locale-gen $locale
-    chroot /target dpkg-reconfigure -f noninteractive locales
     success "Updated and installed dependencies"
 
+
+    info "User configuration"
+    info "Adding user $username"
+    chroot /mnt adduser --disabled-password --gecos "" "$username"
+    chroot /mnt usermod -a -G sudo,adm $username
+    
+    info "Setting passwords for root and $username"
+    printf 'root:%s\n' "$rootpassword" | chroot /mnt chpasswd
+    printf '%s:%s\n' "$username" "$userpassword" | chroot /mnt chpasswd
+
+    success "User configured"
+
+    
+    info "Locales configuration"
+    sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /mnt/etc/locale.gen
+    sed -i -e "s/# $locale.*/$locale UTF-8/" /mnt/etc/locale.gen
+    printf 'LANG="%s"' "$locale" > /mnt/etc/default/locale
+    chroot /mnt dpkg-reconfigure -f noninteractive locales
+    chroot /mnt update-locale LANG=$locale
+    success "Locales configured"
+
+
     info "System initialisation"
-    mkdir -p /target/root/.ssh
-    chmod 700 /target/root/.ssh
-    mkdir -p "/target/home/$username/.ssh"
-    chmod 700 "/target/home/$username/.ssh"
-    chroot /target chown -R $username:$username "/home/$username/.ssh"
-    printf '%s\n' "$sshpubkey" > /target/root/.ssh/authorized_keys
-    printf '%s\n' "$sshpubkey" > "/target/home/$username/.ssh/authorized_keys"
-    printf '%s\n' "$sshpubkey" > /target/etc/dropbear-initramfs/authorized_keys
-    sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin no/g' /target/etc/ssh/sshd_config
-    sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/g' /target/etc/ssh/sshd_config
-    sed -i "s/^GRUB_CMDLINE_LINUX=\".*\"/GRUB_CMDLINE_LINUX=\"net.ifnames=0\ biosdevname=0\ ip=$address4::$gateway4:$full_netmask4::eth0:none\"/g" /target/etc/default/grub
-    sed -i 's/^#GRUB_TERMINAL=console$/GRUB_TERMINAL=console/g' /target/etc/default/grub
-    echo 'FSCKFIX=yes' >> /target/etc/default/rcS
-    sed -i 's/^#Storage=auto$/Storage=persistent/g' /target/etc/systemd/journald.conf
-    chroot /target grub-install /dev/sda
-    chroot /target update-grub
-    chroot /target update-initramfs -u
+    mkdir -p /mnt/root/.ssh
+    chmod 700 /mnt/root/.ssh
+    mkdir -p "/mnt/home/$username/.ssh"
+    chmod 700 "/mnt/home/$username/.ssh"
+    chroot /mnt chown -R $username:$username "/home/$username/.ssh"
+    printf '%s\n' "$sshpubkey" > /mnt/root/.ssh/authorized_keys
+    printf '%s\n' "$sshpubkey" > "/mnt/home/$username/.ssh/authorized_keys"
+    printf '%s\n' "$sshpubkey" > /mnt/etc/dropbear-initramfs/authorized_keys
+    sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin no/g' /mnt/etc/ssh/sshd_config
+    sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/g' /mnt/etc/ssh/sshd_config
+    sed -i "s/^GRUB_CMDLINE_LINUX=\".*\"/GRUB_CMDLINE_LINUX=\"net.ifnames=0\ biosdevname=0\ ip=$address4::$gateway4:$full_netmask4::eth0:none\"/g" /mnt/etc/default/grub
+    sed -i 's/^#GRUB_TERMINAL=console$/GRUB_TERMINAL=console/g' /mnt/etc/default/grub
+    echo 'FSCKFIX=yes' >> /mnt/etc/default/rcS
+    sed -i 's/^#Storage=auto$/Storage=persistent/g' /mnt/etc/systemd/journald.conf
+    chroot /mnt grub-install /dev/sda
+    chroot /mnt update-grub
+    chroot /mnt update-initramfs -u
     success "System initialised"
 
     info "Unmounting"
@@ -445,33 +520,44 @@ HERE
 sysmount(){
     test -b /dev/mapper/sda2_crypt || cryptsetup luksOpen /dev/sda2 sda2_crypt
     vgchange -aay
-    mkdir -p /target
-    mountpoint -q -- "/target" || mount -v /dev/mapper/vg0-root /target
-    mountpoint -q -- "/target/boot" || mount -v /dev/sda1 /target/boot
-    mountpoint -q -- "/target/dev" || mount -v --bind /dev /target/dev
-    mountpoint -q -- "/target/run" || mount -v --bind /run /target/run
-    mountpoint -q -- "/target/proc" || mount -v -t proc proc /target/proc
-    mountpoint -q -- "/target/sys" || mount -v -t sysfs sys /target/sys
+    mkdir -p /mnt
+    mountpoint -q -- "/mnt" || mount -v /dev/mapper/vg0-root /mnt
+    mountpoint -q -- "/mnt/boot" || mount -v /dev/sda1 /mnt/boot
+    mountpoint -q -- "/mnt/dev" || mount -v --bind /dev /mnt/dev
+    mountpoint -q -- "/mnt/run" || mount -v --bind /run /mnt/run
+    mountpoint -q -- "/mnt/proc" || mount -v -t proc proc /mnt/proc
+    mountpoint -q -- "/mnt/sys" || mount -v -t sysfs sys /mnt/sys
     swapon -v /dev/mapper/vg0-swap || true
 }
 
 unmount(){
-    umount -v /target/boot
-    umount -v /target/dev
-    umount -v /target/run
-    umount -v /target/proc
-    umount -v /target/sys
-    umount -v /target
+    umount -v /mnt/dev/pts
+    umount -v /mnt/dev
+    umount -v /mnt/run
+    umount -v /mnt/proc
+    umount -v /mnt/sys
+    umount -v /mnt/usr
+    umount -v /mnt/var
+    umount -v /mnt/home
+    umount -v /mnt/srv
+    umount -v /mnt/tmp
+    umount -v /mnt/boot
+    umount -v /mnt
     swapoff -v -a
-    lvchange -an /dev/mapper/vg0-root /dev/mapper/vg0-swap
-    cryptsetup luksClose sda2_crypt
+    lvchange -an /dev/mapper/$vgname-root \
+                 /dev/mapper/$vgname-usr \
+                 /dev/mapper/$vgname-var \
+                 /dev/mapper/$vgname-srv \
+                 /dev/mapper/$vgname-swap \
+                 /dev/mapper/$vgname-tmp
+    cryptsetup luksClose $pvname
 }
 
 rescue(){
     info "Starting the recovery"
     sysmount
     success "All set. Opening chroot now."
-    chroot /target /bin/bash
+    chroot /mnt /bin/bash
     input "Do you want to unmount the volumes? [yN]"
     read answer
     if test "x${answer/[yY]/yes}" = "xyes"; then
